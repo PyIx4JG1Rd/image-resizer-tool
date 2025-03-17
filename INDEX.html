@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dimension + Quality Image Resizer</title>
+  <style>
+    body {
+      font-family: 'Poppins', sans-serif;
+      background: linear-gradient(135deg, #ff9a9e, #fad0c4);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      color: #333;
+      text-align: center;
+    }
+    .container {
+      background: rgba(255, 255, 255, 0.9);
+      padding: 30px;
+      box-shadow: 0px 0px 15px rgba(0, 0, 0, 0.2);
+      border-radius: 10px;
+      max-width: 400px;
+      width: 100%;
+    }
+    input, select, button {
+      margin: 10px;
+      padding: 12px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      width: 90%;
+      display: block;
+      margin: 10px auto;
+    }
+    button {
+      background: #28a745;
+      color: white;
+      cursor: pointer;
+      transition: 0.3s;
+    }
+    button:hover {
+      background: #218838;
+    }
+    #download {
+      display: none;
+      text-decoration: none;
+      background: #007bff;
+      padding: 12px;
+      border-radius: 5px;
+      color: white;
+      margin-top: 15px;
+    }
+    #sizeInfo {
+      margin-top: 10px;
+      font-size: 16px;
+      color: #333;
+    }
+    #loader {
+      display: none;
+      margin: 10px auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Dimension + Quality Image Resizer</h2>
+    <input type="file" id="imageInput" accept="image/*">
+    <input type="number" id="inputSize" placeholder="Enter Desired Size">
+    <select id="sizeUnit">
+      <option value="KB">KB</option>
+      <option value="MB">MB</option>
+    </select>
+    <button onclick="resizeImage()">Resize</button>
+    <img id="loader" src="https://i.gifer.com/VAyR.gif" width="50" height="50">
+    <p id="sizeInfo"></p>
+    <a id="download" download="resized_image.jpg">Download Resized Image</a>
+  </div>
+  
+  <script>
+    function resizeImage() {
+      const file = document.getElementById('imageInput').files[0];
+      const inputSize = parseFloat(document.getElementById('inputSize').value);
+      const sizeUnit = document.getElementById('sizeUnit').value;
+      const loader = document.getElementById('loader');
+      const sizeInfo = document.getElementById('sizeInfo');
+      const downloadLink = document.getElementById('download');
+
+      if (!file || !inputSize) {
+        alert('Please select an image and enter a valid desired size.');
+        return;
+      }
+
+      // Optional: Limit to 25MB upload
+      if (file.size > 25 * 1024 * 1024) {
+        alert('File size should not exceed 25MB.');
+        return;
+      }
+
+      loader.style.display = 'block';
+      downloadLink.style.display = 'none';
+      sizeInfo.innerText = '';
+
+      // Calculate target size in bytes
+      const targetSize = inputSize * (sizeUnit === 'KB' ? 1024 : 1048576);
+      // Acceptable range: 10% less to 10% more than targetSize
+      const minAcceptable = targetSize * 0.9;
+      const maxAcceptable = targetSize * 1.1;
+
+      // Read file
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = function(e) {
+        const img = new Image();
+        img.src = e.target.result;
+
+        img.onload = function() {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+
+          // 1) Binary search on dimension scale
+          let scaleLow = 0.05;
+          let scaleHigh = 1.0;
+          let scaleQuality = 0.9; // fixed high quality for dimension scaling
+          let bestScale = 1.0;
+          let attempts = 0;
+          let maxAttempts = 20;
+
+          function dimensionSearch() {
+            attempts++;
+            if (attempts > maxAttempts) {
+              // Dimension scaling couldn't get in range
+              // proceed to second step: Quality search
+              qualitySearch(bestScale);
+              return;
+            }
+            let scale = (scaleLow + scaleHigh) / 2;
+            canvas.width = img.width * scale;
+            canvas.height = img.height * scale;
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+            canvas.toBlob((blob) => {
+              const resizedSize = blob.size;
+              if (resizedSize >= minAcceptable && resizedSize <= maxAcceptable) {
+                // Perfect dimension scaling found
+                bestScale = scale;
+                showResult(blob);
+              } else if (resizedSize > maxAcceptable) {
+                // Too large, reduce scale
+                scaleHigh = scale;
+                dimensionSearch();
+              } else {
+                // Too small, increase scale
+                scaleLow = scale;
+                dimensionSearch();
+              }
+            }, 'image/jpeg', scaleQuality);
+          }
+
+          // 2) If dimension scaling alone isn't enough, do a quality search
+          function qualitySearch(finalScale) {
+            let qLow = 0.1;
+            let qHigh = 1.0;
+            let qAttempts = 0;
+            let qMaxAttempts = 20;
+
+            function adjustQuality() {
+              qAttempts++;
+              if (qAttempts > qMaxAttempts) {
+                // Not found an exact match, show best
+                alert('Could not resize image exactly within the specified range, closest match is provided.');
+                loader.style.display = 'none';
+                return;
+              }
+              canvas.width = img.width * finalScale;
+              canvas.height = img.height * finalScale;
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+              let quality = (qLow + qHigh) / 2;
+              canvas.toBlob((blob) => {
+                const resizedSize = blob.size;
+                if (resizedSize >= minAcceptable && resizedSize <= maxAcceptable) {
+                  showResult(blob);
+                } else if (resizedSize > maxAcceptable) {
+                  qHigh = quality;
+                  adjustQuality();
+                } else {
+                  qLow = quality;
+                  adjustQuality();
+                }
+              }, 'image/jpeg', (qLow + qHigh) / 2);
+            }
+            adjustQuality();
+          }
+
+          // Helper to show final result
+          function showResult(blob) {
+            const resizedSize = blob.size;
+            const resizedSizeKB = (resizedSize / 1024).toFixed(2);
+            const resizedSizeMB = (resizedSize / 1048576).toFixed(2);
+            sizeInfo.innerText = `Resized Image Size: ${resizedSizeKB} KB (${resizedSizeMB} MB)`;
+            const resizedURL = URL.createObjectURL(blob);
+            downloadLink.href = resizedURL;
+            downloadLink.style.display = 'block';
+            loader.style.display = 'none';
+          }
+
+          // Start dimension search first
+          dimensionSearch();
+        };
+      };
+    }
+  </script>
+</body>
+</html>
